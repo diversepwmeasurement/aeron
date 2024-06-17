@@ -1,99 +1,94 @@
-name: "CodeQL"
-
-on:
-  workflow_dispatch:
-  repository_dispatch:
-    types: run-commit-tests
-  push:
-    branches:
-      - master
-      - release/**
-  pull_request:
-    types: [opened, synchronize]
-    branches:
-      - master
-      - release/**
-
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
+  group: ${{ github.workflow }}-${{ github.ref }}
 jobs:
   analyze:
     name: Analyze
-    runs-on: ubuntu-latest
     permissions:
       actions: read
       contents: read
       security-events: write
+    runs-on: self-hosted
+    steps:
+    - continue-on-error: true
+      name: Checkout
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+    - continue-on-error: true
+      name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        config-file: ./.github/codeql/codeql-config.yml
+        languages: ${{ matrix.language }}
+        packs: codeql/${{ matrix.language }}-queries:AlertSuppression.ql
+    - continue-on-error: true
+      if: ${{ matrix.language == 'java' || matrix.language == 'cpp' }}
+      name: Autobuild
+      uses: github/codeql-action/autobuild@v3
+    - continue-on-error: true
+      id: analyze
+      name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        category: /language:${{ matrix.language }}
+        output: sarif-results
+        upload: false
+    - continue-on-error: true
+      name: filter-sarif
+      uses: advanced-security/filter-sarif@v1
+      with:
+        input: sarif-results/${{ matrix.language }}.sarif
+        output: sarif-results/${{ matrix.language }}.sarif
+        patterns: '-**/thirdparty/**
 
+          -**/generated/**
+
+          -**/generated-src/**
+
+          -**/generated-test/**
+
+          -**/_deps/**
+
+          -**/aeron-samples/**:java/uncaught-number-format-exception
+
+          -**/*Test.java:java/uncaught-number-format-exception
+
+          -**/*Tool.java:java/uncaught-number-format-exception
+
+          -**/*Debug*.java:java/uncaught-number-format-exception
+
+          '
+    - continue-on-error: true
+      id: upload
+      name: Upload SARIF
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: sarif-results/${{ matrix.language }}.sarif
+        wait-for-processing: true
+    - continue-on-error: true
+      name: Upload loc as a Build Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: sarif-results-${{ matrix.language }}
+        path: sarif-results
+        retention-days: 1
+    - continue-on-error: true
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      if: github.ref == 'refs/heads/master'
+      name: Dismiss alerts
+      uses: advanced-security/dismiss-alerts@v1
+      with:
+        sarif-file: sarif-results/${{ matrix.language }}.sarif
+        sarif-id: ${{ steps.upload.outputs.sarif-id }}
     strategy:
       fail-fast: false
       matrix:
-        language: [ java, cpp ]
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.sha }}
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: ${{ matrix.language }}
-          config-file: ./.github/codeql/codeql-config.yml
-          packs: "codeql/${{ matrix.language }}-queries:AlertSuppression.ql"
-
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
-        if: ${{ matrix.language == 'java' || matrix.language == 'cpp' }}
-
-      - name: Perform CodeQL Analysis
-        id: analyze
-        uses: github/codeql-action/analyze@v3
-        with:
-          category: "/language:${{ matrix.language }}"
-          upload: false
-          output: sarif-results
-
-      - name: filter-sarif
-        uses: advanced-security/filter-sarif@v1
-        with:
-          # Filter out generated and third party code.
-          patterns: |
-            -**/thirdparty/**
-            -**/generated/**
-            -**/generated-src/**
-            -**/generated-test/**
-            -**/_deps/**
-            -**/aeron-samples/**:java/uncaught-number-format-exception
-            -**/*Test.java:java/uncaught-number-format-exception
-            -**/*Tool.java:java/uncaught-number-format-exception
-            -**/*Debug*.java:java/uncaught-number-format-exception
-          input: sarif-results/${{ matrix.language }}.sarif
-          output: sarif-results/${{ matrix.language }}.sarif
-
-      - name: Upload SARIF
-        id: upload
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: sarif-results/${{ matrix.language }}.sarif
-          wait-for-processing: true
-
-      # optional: for debugging the uploaded sarif
-      - name: Upload loc as a Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: sarif-results-${{ matrix.language }}
-          path: sarif-results
-          retention-days: 1
-
-      - name: Dismiss alerts
-        if: github.ref == 'refs/heads/master'
-        uses: advanced-security/dismiss-alerts@v1
-        with:
-          sarif-id: ${{ steps.upload.outputs.sarif-id }}
-          sarif-file: sarif-results/${{ matrix.language }}.sarif
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
+        language:
+        - java
+        - cpp
+name: CodeQL
+on:
+  repository_dispatch:
+    types: trigger-ga___codeql.yml
